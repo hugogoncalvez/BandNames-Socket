@@ -1,9 +1,12 @@
+import 'package:flutter/material.dart';
+import 'package:provider/provider.dart';
+import 'package:flutter/cupertino.dart';
 import 'dart:io';
+import 'package:pie_chart/pie_chart.dart';
 
 import 'package:band_names/helpers/size.dart';
 import 'package:band_names/models/band.dart';
-import 'package:flutter/cupertino.dart';
-import 'package:flutter/material.dart';
+import 'package:band_names/services/socket_service.dart';
 
 class HomePage extends StatefulWidget {
   @override
@@ -11,19 +14,44 @@ class HomePage extends StatefulWidget {
 }
 
 class _HomePageState extends State<HomePage> {
-  List<Band> bands = [
-    Band(id: '1', name: 'Metallica', votes: 5),
-    Band(id: '2', name: 'Soda Stereo', votes: 15),
-    Band(id: '3', name: 'Virus', votes: 5),
-    Band(id: '4', name: 'Depeche Mode', votes: 10),
-    Band(id: '5', name: 'U2', votes: 5),
-    Band(id: '6', name: 'The Cure', votes: 5),
-  ];
+  List<Band> bands = [];
+  Map<String, double> dataMap = {};
+
+  @override
+  void initState() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.on('active-bands', _handleActiveBands);
+    super.initState();
+  }
+
+  _handleActiveBands(dynamic payload) {
+    print(payload);
+    bands = (payload as List).map((band) => Band.fromMap(band)).toList();
+    setState(() {});
+  }
+
+  @override
+  void dispose() {
+    final socketService = Provider.of<SocketService>(context, listen: false);
+    socketService.socket.off('active-bands');
+    super.dispose();
+  }
+
   @override
   Widget build(BuildContext context) {
+    final socketService = Provider.of<SocketService>(context);
+    final serverStatus = socketService.serverStatus;
+
     return Scaffold(
       appBar: AppBar(
         elevation: 1,
+        actions: [
+          Container(
+              margin: EdgeInsets.only(right: context.height * 0.012),
+              child: (serverStatus == ServerStatus.onLine)
+                  ? Icon(Icons.check_circle, color: Colors.blue[300])
+                  : Icon(Icons.offline_bolt, color: Colors.red[300]))
+        ],
         title: const Text(
           'Band Names',
           style: TextStyle(color: Colors.black87),
@@ -31,9 +59,19 @@ class _HomePageState extends State<HomePage> {
         centerTitle: true,
         backgroundColor: Colors.white,
       ),
-      body: ListView.builder(
-          itemCount: bands.length,
-          itemBuilder: (context, index) => _bandTile(bands[index])),
+      body: Column(
+        children: [
+          // SizedBox(height: context.height * 0.05),
+          Padding(
+              padding: EdgeInsets.all(context.height * 0.03),
+              child: _ShowGraph()),
+          Expanded(
+            child: ListView.builder(
+                itemCount: bands.length,
+                itemBuilder: (context, index) => _bandTile(bands[index])),
+          ),
+        ],
+      ),
       floatingActionButton: FloatingActionButton(
         onPressed: addNewBand,
         child: const Icon(Icons.add),
@@ -43,12 +81,10 @@ class _HomePageState extends State<HomePage> {
   }
 
   Widget _bandTile(Band band) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
     return Dismissible(
-      onDismissed: (direction) {
-        print('direccion: $direction');
+      onDismissed: (_) => socketService.socket.emit('borrar', {'id': band.id}),
 
-        print('id: ${band.id}');
-      },
       background: Container(
         padding: EdgeInsets.only(left: context.height * 0.015),
         color: Colors.red,
@@ -69,7 +105,7 @@ class _HomePageState extends State<HomePage> {
         title: Text(band.name),
         trailing: Text('${band.votes}',
             style: TextStyle(fontSize: context.height * 0.0243)),
-        onTap: () {},
+        onTap: () => socketService.socket.emit('voto', {'id': band.id}),
       ),
     );
   }
@@ -79,55 +115,94 @@ class _HomePageState extends State<HomePage> {
 
     if (Platform.isAndroid) {
       return showDialog(
-        context: context,
-        builder: (contex) {
-          return AlertDialog(
-            title: const Text('New Band Name'),
-            content: TextField(
-              controller: textController,
-            ),
-            actions: [
-              MaterialButton(
-                elevation: 5,
-                textColor: Colors.blue,
-                onPressed: () => addBandToList(textController.text),
-                child: const Text('Agregar'),
-              )
-            ],
-          );
-        },
-      );
+          context: context,
+          builder: (_) => AlertDialog(
+                title: const Text('New Band Name'),
+                content: TextField(
+                  controller: textController,
+                ),
+                actions: [
+                  MaterialButton(
+                    elevation: 5,
+                    textColor: Colors.blue,
+                    onPressed: () => addBandToList(textController.text),
+                    child: const Text('Agregar'),
+                  )
+                ],
+              ));
     }
     showCupertinoDialog(
         context: context,
-        builder: (_) {
-          return CupertinoAlertDialog(
-            title: const Text('New Band Name'),
-            content: CupertinoTextField(
-              controller: textController,
-            ),
-            actions: [
-              CupertinoDialogAction(
-                child: const Text('Agregar'),
-                isDefaultAction: true,
-                onPressed: () => addBandToList(textController.text),
+        builder: (_) => CupertinoAlertDialog(
+              title: const Text('New Band Name'),
+              content: CupertinoTextField(
+                controller: textController,
               ),
-              CupertinoDialogAction(
-                child: const Text('Dismiss'),
-                isDestructiveAction: true,
-                onPressed: () => Navigator.pop(context),
-              )
-            ],
-          );
-        });
+              actions: [
+                CupertinoDialogAction(
+                  child: const Text('Agregar'),
+                  isDefaultAction: true,
+                  onPressed: () => addBandToList(textController.text),
+                ),
+                CupertinoDialogAction(
+                  child: const Text('Dismiss'),
+                  isDestructiveAction: true,
+                  onPressed: () => Navigator.pop(context),
+                )
+              ],
+            ));
   }
 
   void addBandToList(String name) {
+    final socketService = Provider.of<SocketService>(context, listen: false);
     if (name.length > 1) {
-      this.bands.add(Band(id: DateTime.now().toString(), name: name, votes: 0));
-      setState(() {});
+      socketService.socket.emit('nueva', {'name': name});
     }
 
     Navigator.pop(context);
+  }
+
+  Widget _ShowGraph() {
+    Map<String, double> dataMap = {};
+    for (var band in bands) {
+      dataMap.putIfAbsent(band.name, () => band.votes.toDouble());
+    }
+    final List<Color> colorList = [
+      Colors.blue.withOpacity(0.5),
+      Colors.blue.withOpacity(0.8),
+      Colors.pink.withOpacity(0.5),
+      Colors.pink.withOpacity(0.8),
+      Colors.red.withOpacity(0.5),
+      Colors.red.withOpacity(0.8),
+      Colors.yellow.withOpacity(0.5),
+      Colors.yellow.withOpacity(0.8),
+    ];
+    return PieChart(
+      dataMap: dataMap,
+      animationDuration: const Duration(milliseconds: 800),
+      chartLegendSpacing: 32,
+      chartRadius: context.height * 0.3,
+      colorList: colorList,
+      initialAngleInDegree: 0,
+      chartType: ChartType.disc,
+      ringStrokeWidth: 32,
+      // centerText: "HYBRID",
+      legendOptions: const LegendOptions(
+        showLegendsInRow: false,
+        legendPosition: LegendPosition.right,
+        showLegends: true,
+        legendShape: BoxShape.circle,
+        legendTextStyle: TextStyle(
+          fontWeight: FontWeight.bold,
+        ),
+      ),
+      chartValuesOptions: const ChartValuesOptions(
+        showChartValueBackground: true,
+        showChartValues: true,
+        showChartValuesInPercentage: false,
+        showChartValuesOutside: false,
+        decimalPlaces: 0,
+      ),
+    );
   }
 }
